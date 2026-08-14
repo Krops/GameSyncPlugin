@@ -28,23 +28,23 @@ namespace GameSyncPlugin
             {
                 new MainMenuItem
                 {
-                    Description = "Reset Database & Sync Game Launchers",
+                    Description = "Sync Launchers & Remove Deleted Games",
                     MenuSection = "@",
                     Action = (mainMenuItemArgs) =>
                     {
-                        ResetDatabaseAndSync();
+                        SyncAndRemoveDeletedGames();
                     }
                 }
             };
         }
 
-        private void ResetDatabaseAndSync()
+        private void SyncAndRemoveDeletedGames()
         {
             var result = PlayniteApi.Dialogs.ShowMessage(
-                "Are you sure you want to remove ALL games from the database and resync all game launchers?\n\nThis action cannot be undone.",
-                "Reset Database & Resync",
+                "Do you want to sync all game launchers and remove games that were deleted from your launcher libraries?",
+                "Sync & Remove Deleted Games",
                 MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
+                MessageBoxImage.Question);
 
             if (result != MessageBoxResult.Yes)
             {
@@ -57,20 +57,6 @@ namespace GameSyncPlugin
 
             try
             {
-                // 1. Purge all games from database
-                using (PlayniteApi.Database.BufferedUpdate())
-                {
-                    var gamesToRemove = PlayniteApi.Database.Games.ToList();
-                    removedCount = gamesToRemove.Count;
-                    foreach (var game in gamesToRemove)
-                    {
-                        PlayniteApi.Database.Games.Remove(game);
-                    }
-                }
-
-                logger.Info($"GameSyncPlugin: Removed {removedCount} games from database.");
-
-                // 2. Fetch active LibraryPlugins and MetadataPlugins
                 var libraryPlugins = PlayniteApi.Addons.Plugins
                     .OfType<LibraryPlugin>()
                     .ToList();
@@ -79,7 +65,7 @@ namespace GameSyncPlugin
                     .OfType<MetadataPlugin>()
                     .ToList();
 
-                var progressOptions = new GlobalProgressOptions("Syncing game launchers & downloading metadata...", true)
+                var progressOptions = new GlobalProgressOptions("Syncing game launchers & updating deleted games...", true)
                 {
                     IsIndeterminate = false
                 };
@@ -101,11 +87,52 @@ namespace GameSyncPlugin
                             var getGamesArgs = new LibraryGetGamesArgs();
                             var rawGameMetadataList = plugin.GetGames(getGamesArgs)?.ToList();
 
-                            if (rawGameMetadataList != null && rawGameMetadataList.Count > 0)
+                            if (rawGameMetadataList != null)
                             {
-                                // De-duplicate games by Name within the same library plugin
                                 var uniqueMetadataList = DeduplicateGameMetadata(rawGameMetadataList);
 
+                                // Collect active IDs and normalized Names returned by the launcher
+                                var activeGameIds = new HashSet<string>(
+                                    uniqueMetadataList.Select(m => m.GameId).Where(id => !string.IsNullOrEmpty(id)),
+                                    StringComparer.OrdinalIgnoreCase);
+
+                                var activeGameNames = new HashSet<string>(
+                                    uniqueMetadataList.Select(m => CleanGameName(m.Name)?.ToLowerInvariant()).Where(n => !string.IsNullOrEmpty(n)).Cast<string>(),
+                                    StringComparer.OrdinalIgnoreCase);
+
+                                // Identify games in Playnite DB belonging to this launcher plugin
+                                var dbGamesForPlugin = PlayniteApi.Database.Games
+                                    .Where(g => g.PluginId == plugin.Id)
+                                    .ToList();
+
+                                // Find games that are no longer present in the launcher's returned library
+                                var gamesToDelete = dbGamesForPlugin
+                                    .Where(g =>
+                                    {
+                                        bool hasGameIdMatch = !string.IsNullOrEmpty(g.GameId) && activeGameIds.Contains(g.GameId);
+                                        var cleanName = CleanGameName(g.Name)?.ToLowerInvariant();
+                                        bool hasNameMatch = cleanName != null && activeGameNames.Contains(cleanName);
+
+                                        return !hasGameIdMatch && !hasNameMatch;
+                                    })
+                                    .ToList();
+
+                                // 1. Remove ONLY the deleted games from Playnite DB
+                                using (PlayniteApi.Database.BufferedUpdate())
+                                {
+                                    foreach (var deletedGame in gamesToDelete)
+                                    {
+                                        PlayniteApi.Database.Games.Remove(deletedGame);
+                                        removedCount++;
+                                    }
+                                }
+
+                                if (gamesToDelete.Count > 0)
+                                {
+                                    logger.Info($"GameSyncPlugin: Removed {gamesToDelete.Count} deleted games for {plugin.Name}.");
+                                }
+
+                                // 2. Sync / Import active games
                                 using (var downloader = plugin.GetMetadataDownloader())
                                 {
                                     using (PlayniteApi.Database.BufferedUpdate())
@@ -119,10 +146,7 @@ namespace GameSyncPlugin
 
                                             if (metadata != null)
                                             {
-                                                // Enrich metadata with cover images, icons, and backgrounds from library or IGDB (automatic background mode)
                                                 EnrichMetadata(metadata, plugin, downloader, metadataPlugins);
-
-                                                // Import EXACTLY ONCE per unique game title
                                                 PlayniteApi.Database.ImportGame(metadata, plugin);
                                                 importedCount++;
                                             }
@@ -144,19 +168,19 @@ namespace GameSyncPlugin
                 }, progressOptions);
 
                 PlayniteApi.Dialogs.ShowMessage(
-                    $"Successfully reset database and resynced library!\n\n" +
-                    $"• Removed games: {removedCount}\n" +
-                    $"• Re-imported games: {importedCount}\n" +
+                    $"Successfully synced game launchers!\n\n" +
+                    $"• Removed deleted games: {removedCount}\n" +
+                    $"• Synced/Updated games: {importedCount}\n" +
                     $"• Duplicates merged: {duplicatesRemoved}",
-                    "Database Reset & Resync Complete",
+                    "Sync Complete",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                logger.Error(ex, "Error during database reset and sync.");
+                logger.Error(ex, "Error during launcher sync.");
                 PlayniteApi.Dialogs.ShowMessage(
-                    $"An error occurred during database reset and sync:\n\n{ex.Message}",
+                    $"An error occurred during launcher sync:\n\n{ex.Message}",
                     "Error",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
