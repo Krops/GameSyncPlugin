@@ -1,0 +1,17 @@
+<UserControl x:Class="GameSyncPlugin.GameSyncPluginSettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             mc:Ignorable="d" 
+             d:DesignHeight="400" d:DesignWidth="600">
+    <StackPanel Margin="20">
+        <CheckBox IsChecked="{Binding Settings.SyncAndImportActiveGames}"
+                  Margin="0,0,0,10"
+                  Content="Sync / Import active games" />
+        <TextBlock Text="When enabled, active games from connected launchers will be imported and have metadata enriched during sync. When disabled (default), only deleted games will be removed from your Playnite library without re-importing active games."
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource TextBrushDarker}"
+                   Margin="24,0,0,0" />
+    </StackPanel>
+</UserControl>

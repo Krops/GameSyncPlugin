@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using Playnite.SDK;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
@@ -11,15 +12,27 @@ namespace GameSyncPlugin
     public class GameSyncPlugin : GenericPlugin
     {
         private static readonly ILogger logger = LogManager.GetLogger();
+        private readonly GameSyncPluginSettingsViewModel settings;
 
         public override Guid Id { get; } = Guid.Parse("e8411d37-23b9-4a9b-9c71-08f237583a12");
 
         public GameSyncPlugin(IPlayniteAPI api) : base(api)
         {
+            settings = new GameSyncPluginSettingsViewModel(this);
             Properties = new GenericPluginProperties
             {
-                HasSettings = false
+                HasSettings = true
             };
+        }
+
+        public override ISettings GetSettings(bool firstRunSettings)
+        {
+            return settings;
+        }
+
+        public override UserControl GetSettingsView(bool firstRunSettings)
+        {
+            return new GameSyncPluginSettingsView();
         }
 
         public override IEnumerable<MainMenuItem> GetMainMenuItems(GetMainMenuItemsArgs args)
@@ -54,6 +67,7 @@ namespace GameSyncPlugin
             int removedCount = 0;
             int importedCount = 0;
             int duplicatesRemoved = 0;
+            bool importActiveGames = settings.Settings.SyncAndImportActiveGames;
 
             try
             {
@@ -132,23 +146,26 @@ namespace GameSyncPlugin
                                     logger.Info($"GameSyncPlugin: Removed {gamesToDelete.Count} deleted games for {plugin.Name}.");
                                 }
 
-                                // 2. Sync / Import active games
-                                using (var downloader = plugin.GetMetadataDownloader())
+                                // 2. Sync / Import active games (only if enabled in Addon Settings)
+                                if (importActiveGames)
                                 {
-                                    using (PlayniteApi.Database.BufferedUpdate())
+                                    using (var downloader = plugin.GetMetadataDownloader())
                                     {
-                                        foreach (var metadata in uniqueMetadataList)
+                                        using (PlayniteApi.Database.BufferedUpdate())
                                         {
-                                            if (progressArgs.CancelToken.IsCancellationRequested)
+                                            foreach (var metadata in uniqueMetadataList)
                                             {
-                                                break;
-                                            }
+                                                if (progressArgs.CancelToken.IsCancellationRequested)
+                                                {
+                                                    break;
+                                                }
 
-                                            if (metadata != null)
-                                            {
-                                                EnrichMetadata(metadata, plugin, downloader, metadataPlugins);
-                                                PlayniteApi.Database.ImportGame(metadata, plugin);
-                                                importedCount++;
+                                                if (metadata != null)
+                                                {
+                                                    EnrichMetadata(metadata, plugin, downloader, metadataPlugins);
+                                                    PlayniteApi.Database.ImportGame(metadata, plugin);
+                                                    importedCount++;
+                                                }
                                             }
                                         }
                                     }
@@ -167,10 +184,14 @@ namespace GameSyncPlugin
 
                 }, progressOptions);
 
+                string importStatusText = importActiveGames
+                    ? $"• Synced/Updated games: {importedCount}\n"
+                    : "• Active games import: Disabled (toggle in Add-on Settings)\n";
+
                 PlayniteApi.Dialogs.ShowMessage(
                     $"Successfully synced game launchers!\n\n" +
                     $"• Removed deleted games: {removedCount}\n" +
-                    $"• Synced/Updated games: {importedCount}\n" +
+                    importStatusText +
                     $"• Duplicates merged: {duplicatesRemoved}",
                     "Sync Complete",
                     MessageBoxButton.OK,
