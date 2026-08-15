@@ -1,11 +1,11 @@
 Id: e8411d37-23b9-4a9b-9c71-08f237583a12
-Name: Database Reset & Launcher Sync
-Author: Developer
-Version: 1.0.0
+Name: Game Sync & Cleanup
+Author: Krop
+Version: 1.0.2
 Type: GenericPlugin
 Module: GameSyncPlugin.dll
 Icon: icon.png
-Description: Clears all games from the Playnite database and triggers a full sync across all enabled game launchers/library plugins.
+Description: Automatically removes deleted games from connected game launchers and syncs library.
 Links:
   - Name: GitHub
-    Url: https://github.com
+    Url: https://github.com/Krops/GameSyncPlugin
